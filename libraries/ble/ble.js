@@ -11,6 +11,8 @@ BLEController.prototype.init = function (stage) {
     this.buffer = [];
 };
 
+BLEController.BLE_PACKET_LEN = 240;
+
 BLEController.prototype.connect = async function (serviceUUID, rxUUIX, txUUID) {
     this.device = await navigator.bluetooth.requestDevice({
         filters: [{ services: [ serviceUUID ] }]
@@ -38,13 +40,27 @@ BLEController.prototype.connect = async function (serviceUUID, rxUUIX, txUUID) {
 };
 
 BLEController.prototype.onReceive = function (event) {
-    let data = new Uint8Array(event.target.value.buffer);
+    var data = new Uint8Array(event.target.value.buffer);
     this.buffer.push(...data);
 };
 
 BLEController.prototype.onDisconnect = function (event) {
     this.stage.ble = null;
     console.log('BLE disconnected');
+};
+
+BLEController.prototype.write = async function (data) {
+    this.sendInProgress = true;
+    // try to send the given data
+    try {
+        await this.rx_char.writeValue(data);
+        this.sendInProgress = false;
+        return;
+    } catch (error) {
+        // for now: print the error but keep trying to send
+        // later: check error an give up if BLE disconnected
+        throw new Error(error);
+    }
 };
 
 BLEController.prototype.disconnect = function () {
@@ -88,10 +104,26 @@ SnapExtensions.primitives.set(
     }
 );
 
-//TODO
 SnapExtensions.primitives.set(
-    'ble_write()',
-    function () {
+    'ble_write(data)',
+    function (data) {
+        var ble = this.parentThatIsA(StageMorph).ble;
+        // Write the given data (a Uint8Array) and return the number of bytes
+        // written. If not busy, start writeLoop with as much data as we can
+        // send.
+        var data = new Uint8Array(data.itemsArray());
+        if (ble.rx_char == undefined) {
+            throw TypeError("Not connected");
+        }
+        if (ble.sendInProgress) {
+            return 0;
+        }
+        var byteCount = 
+            (data.length > BLEController.BLE_PACKET_LEN) ?
+            BLEController.BLE_PACKET_LEN :
+            data.length;
+        ble.write(data.subarray(0, byteCount));
+        return byteCount;
     }
 );
 
